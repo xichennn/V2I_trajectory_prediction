@@ -15,8 +15,8 @@ import pandas as pd
 import torch
 
 import sys
-sys.path.append("..")
-sys.path.append('/Users/xichen/Documents/paper2-traj-pred/DAIR-V2X-Seq/projects')
+# sys.path.append("..")
+# sys.path.append('/Users/xichen/Documents/paper2-traj-pred/DAIR-V2X-Seq/projects')
 
 from torch_geometric.data import Data
 from torch_geometric.data import Dataset
