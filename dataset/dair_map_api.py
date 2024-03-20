@@ -29,7 +29,7 @@ MAX_LABEL_DIST_TO_LANE = 20  # meters
 OUT_OF_RANGE_LANE_DIST_THRESHOLD = 5.0  # 5 meters
 ROI_ISOCONTOUR = 5.0
 
-DATA_ROOT = os.path.join(os.getcwd(), "dataset/v2x-seq-tfd/V2X-Seq-TFD-Example")
+DATA_ROOT = os.path.join(os.getcwd(), "../drive/MyDrive/v2x_data_mini/")
 ROOT = os.path.join(DATA_ROOT, 'map_files')
 
 # ROOT = os.path.join(os.environ.get('DATA_ROOT'), 'map_files')
