@@ -109,34 +109,17 @@ class cross_graph_attention(nn.Module):
         self.lin_hh = nn.Linear(embed_dim, embed_dim)
         self.attn_drop = nn.Dropout(dropout)
         self.softmax = nn.Softmax(dim=1)
-    def forward(self, matched_car_embed, matched_infra_embed):
-        return self.feat_fusion(matched_car_embed, matched_infra_embed)
-
-    # def forward(self,infra_graph, car_graph, graph_match_matrix, valid_cars, valid_infra):    
-
-    #     fused_graph = torch.cat((car_graph, infra_graph), dim=0)
-    #     valid_mask = torch.cat((valid_cars, valid_infra), dim=0)
-    #     paired_idx = (graph_match_matrix == 1).nonzero(as_tuple=False)
-    #     fused_infra_feat = infra_graph[valid_infra][paired_idx[:,0]]
-    #     fused_car_feat = car_graph[valid_cars][paired_idx[:,1]]
-    #     fused_graph[valid_mask][paired_idx[:,1]] = self.feat_fusion(fused_car_feat, fused_infra_feat)
-    #     valid_mask[valid_cars.shape[0]+torch.where(valid_mask[valid_cars.shape[0]:]==True)[0][paired_idx[:,0]]] = False #fused feat only need once
-    #     # num_overlap_nodes = graph_match_matrix.sum(dim=1).count_nonzero()
-    #     # num_nodes_all = infra_graph.shape[0] + car_graph.shape[0] - num_overlap_nodes 
-    #     assert valid_mask.sum() == graph_match_matrix.shape[0]+graph_match_matrix.shape[1]-fused_car_feat.shape[0]
-
-    #     return fused_graph, valid_mask
-    def feat_fusion(self, car_feat, infra_feat):
-        query = self.lin_q(infra_feat).view(-1, self.num_heads, self.embed_dim // self.num_heads)
-        key = self.lin_k(car_feat).view(-1, self.num_heads, self.embed_dim // self.num_heads)
-        value = self.lin_v(car_feat).view(-1, self.num_heads, self.embed_dim // self.num_heads)
+    def forward(self, car_feat, infra_feat):
+        query = self.lin_q(car_feat).view(-1, self.num_heads, self.embed_dim // self.num_heads)
+        key = self.lin_k(infra_feat).view(-1, self.num_heads, self.embed_dim // self.num_heads)
+        value = self.lin_v(infra_feat).view(-1, self.num_heads, self.embed_dim // self.num_heads)
         scale = (self.embed_dim // self.num_heads) ** 0.5
         alpha = (query * key).sum(dim=-1) / scale
         alpha = self.softmax(alpha)
         alpha = self.attn_drop(alpha)
-        car_att = (value * alpha.unsqueeze(-1)).reshape(-1, self.embed_dim)
-        w = torch.sigmoid(self.lin_ih(infra_feat) + self.lin_hh(car_att))
-        fused_feat = w * self.lin_self(infra_feat) + (1-w) * car_att
+        infra_att = (value * alpha.unsqueeze(-1)).reshape(-1, self.embed_dim)
+        w = torch.sigmoid(self.lin_ih(car_feat) + self.lin_hh(infra_att))
+        fused_feat = w * self.lin_self(car_feat) + (1-w) * infra_att
         return fused_feat
     
 class TemporalEncoder(nn.Module):
