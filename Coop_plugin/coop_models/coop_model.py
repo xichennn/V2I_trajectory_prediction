@@ -40,16 +40,6 @@ class CoopModel(nn.Module):
                                   device = device, 
                                   num_heads=num_heads, 
                                   dropout=dropout)
-        self.car_graph = AA_GAT(node_dim = ip_dim, 
-                                  embed_dim = embed_dim, 
-                                  out_dim = out_dim, 
-                                  edge_attr_dim = ip_dim, 
-                                  device = device, 
-                                  num_heads=num_heads, 
-                                  dropout=dropout)
-        self.cross_graph_attention = cross_graph_attention(embed_dim=embed_dim*num_heads,
-                                                           num_heads=num_heads,
-                                                           dropout=dropout)
 
         self.temp_encoder = TemporalEncoder(historical_steps=historical_steps,
                                     embed_dim=out_dim,
