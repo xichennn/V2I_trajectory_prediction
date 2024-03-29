@@ -31,7 +31,7 @@ class AA_GAT(nn.Module):
     def forward(self, X, edge_index, edge_attr, matched_car_infra_nodes):
 
         x = self.node_embed(X)
-        x[matched_car_infra_nodes[0]] = self.cross_att(x[matched_car_infra_nodes[0]], x[matched_car_infra_nodes[1]])
+        # x[matched_car_infra_nodes[0]] = self.cross_att(x[matched_car_infra_nodes[0]], x[matched_car_infra_nodes[1]])
         edge_attr_embed = self.edge_attr_embed(edge_attr)
         
         # Concatenate multi-head attentions
