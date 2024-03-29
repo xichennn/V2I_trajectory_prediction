@@ -98,16 +98,17 @@ class Coop(pl.LightningModule):
             #get subgraph accroding to padding_mask and iou match
 
             v2x_data[f'edge_index_{t}'], _ = subgraph(subset=valid_t, edge_index=v2x_data.edge_index)
+            v2x_data[f'edge_index_{t}'], _ = subgraph(subset=v2x_data.source==0, edge_index=v2x_data.edge_index)
             v2x_data[f'edge_attr_{t}'] = \
                 v2x_data['positions'][v2x_data[f'edge_index_{t}'][0], t] - v2x_data['positions'][v2x_data[f'edge_index_{t}'][1], t]
 
             # get vic graph encoding
             v2x_edge_index_t, v2x_edge_attr_t = self.drop_edge_distance(v2x_data[f'edge_index_{t}'], v2x_data[f'edge_attr_{t}'])
-            (merged_edge_index_t, merged_edge_attr_t, matched_car_infra_nodes) = \
-            self.drop_edge_vic(v2x_edge_index_t, v2x_edge_attr_t, v2x_data["positions"], v2x_data["width"], v2x_data["height"], v2x_data["source"], t)
+            # (merged_edge_index_t, merged_edge_attr_t, matched_car_infra_nodes) = \
+            # self.drop_edge_vic(v2x_edge_index_t, v2x_edge_attr_t, v2x_data["positions"], v2x_data["width"], v2x_data["height"], v2x_data["source"], t)
 
-            v2x_graph_out[t] = self.v2x_graph(X=v2x_data.x[:, t], edge_index=merged_edge_index_t, edge_attr=merged_edge_attr_t, matched_car_infra_nodes=matched_car_infra_nodes) #[N1, embed_size]
-                                        # bos_mask=infra_data['bos_mask'][:, t], rotate_mat=rotate_imat)
+            # v2x_graph_out[t] = self.v2x_graph(X=v2x_data.x[:, t], edge_index=merged_edge_index_t, edge_attr=merged_edge_attr_t, matched_car_infra_nodes=matched_car_infra_nodes) #[N1, embed_size]
+            v2x_graph_out[t] = self.v2x_graph(X=v2x_data.x[:, t], edge_index=v2x_edge_index_t, edge_attr=v2x_edge_attr_t, matched_car_infra_nodes=[]) #[N1, embed_size]                          
         
 
             #use mask for overlapping agents
