@@ -14,7 +14,6 @@ from torch_geometric.typing import Size
 from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.utils import softmax
 from torch_geometric.utils import subgraph, add_self_loops
-from dataloader.v2x_dataset import  V2XDataset
     
 class AA_GAT(nn.Module):
     def __init__(self, node_dim, embed_dim, out_dim, edge_attr_dim, device, num_heads=8, dropout=0.1):
@@ -185,20 +184,25 @@ class ALEncoder(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.out_transform = nn.Linear(out_dim*num_heads, out_dim, bias=False)
 
-    def forward(self, data: V2XDataset, v_enc: torch.Tensor):
+    def forward(self, lane_vectors: torch.Tensor, 
+                lane_actor_index: torch.Tensor, 
+                num_nodes: torch.Tensor,
+                rotate_imat: torch.Tensor,  
+                lane_actor_vectors: torch.Tensor, 
+                v_enc: torch.Tensor):
 
-        lane = data.lane_vectors
+        lane = lane_vectors
 
         # lane_actor_mask = torch.cat((v_mask, (torch.ones(lane.size(0))==1).to(self.device)), dim=0)
-        data.lane_actor_index[0] += data.num_nodes #lane_actor_index[0]:lane index, lane_actor_index[1]:actor index
+        lane_actor_index[0] += num_nodes #lane_actor_index[0]:lane index, lane_actor_index[1]:actor index
         # lane_actor_index, lane_actor_attr = subgraph(subset=lane_actor_mask, 
         #                                edge_index=data.lane_actor_index, edge_attr=data.lane_actor_attr)
-        lane = torch.bmm(lane[data.lane_actor_index[0]-data.num_nodes].unsqueeze(-2), data.rotate_imat[data.lane_actor_index[1]].float()).squeeze(-2)
+        lane = torch.bmm(lane[lane_actor_index[0]-num_nodes].unsqueeze(-2), rotate_imat[lane_actor_index[1]].float()).squeeze(-2)
 
         lane_enc = self.lane_emb(lane)
         lane_actor_enc = torch.cat((v_enc, lane_enc), dim=0) #shape:[num_veh+num_lane, v_dim]
         # Concat multi-head attentions
-        out = torch.cat([att(lane_actor_enc, data.num_nodes, lane.size(0), data.lane_actor_index, data.lane_actor_vectors) for att in self.attention_layers], dim=1) 
+        out = torch.cat([att(lane_actor_enc, num_nodes, lane.size(0), lane_actor_index, lane_actor_vectors) for att in self.attention_layers], dim=1) 
         out = F.elu(out)
         out = self.dropout(out)
         out = self.out_transform(out)
