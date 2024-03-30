@@ -13,6 +13,8 @@ from torch_geometric.typing import OptTensor
 from torch_geometric.typing import Size
 from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.utils import softmax
+from torch_geometric.utils import subgraph, add_self_loops
+from dataloader.v2x_dataset import  V2XDataset
     
 class AA_GAT(nn.Module):
     def __init__(self, node_dim, embed_dim, out_dim, edge_attr_dim, device, num_heads=8, dropout=0.1):
