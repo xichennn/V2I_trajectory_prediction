@@ -126,7 +126,8 @@ class Coop(pl.LightningModule):
         # al_out = self.al_encoder(x=(v2x_data.lane_vectors, temp_out), edge_index=al_edge_index, edge_attr=al_edge_attr,
         #                       is_intersections=v2x_data.is_intersections, turn_directions=v2x_data.turn_directions,
         #                       traffic_controls=v2x_data.traffic_controls, rotate_mat=v2x_data.rotate_imat.float())
-        al_out = self.al_encoder(v2x_data, temp_out)
+        al_out = self.al_encoder(v2x_data.lane_vectors, v2x_data.lane_actor_index, v2x_data.num_nodes, 
+                                 v2x_data.rotate_imat, v2x_data.lane_actor_vectors, temp_out)
         #decoder
         out = self.decoder(al_out) #traj, log_probs
 
