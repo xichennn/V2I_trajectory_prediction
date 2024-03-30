@@ -129,9 +129,10 @@ class TemporalEncoder(nn.Module):
                  embed_dim: int,
                  num_heads: int = 8,
                  num_layers: int = 4,
-                 dropout: float = 0.1) -> None:
+                 dropout: float = 0.1,
+                 temp_ff: int = 128) -> None:
         super(TemporalEncoder, self).__init__()
-        encoder_layer = TemporalEncoderLayer(embed_dim=embed_dim, num_heads=num_heads, dropout=dropout)
+        encoder_layer = nn.TransformerEncoderLayer(embed_dim, num_heads, dim_feedforward=temp_ff, dropout=dropout)
         self.transformer_encoder = nn.TransformerEncoder(encoder_layer=encoder_layer, num_layers=num_layers,
                                                          norm=nn.LayerNorm(embed_dim))
         self.padding_token = nn.Parameter(torch.Tensor(historical_steps, 1, embed_dim))
@@ -143,14 +144,18 @@ class TemporalEncoder(nn.Module):
         nn.init.normal_(self.cls_token, mean=0., std=.02)
         nn.init.normal_(self.pos_embed, mean=0., std=.02)
         self.apply(init_weights)
+        self.dropout = nn.Dropout(dropout)
+        self.layer_norm = nn.LayerNorm(embed_dim)
 
     def forward(self,
                 x: torch.Tensor,
                 padding_mask: torch.Tensor) -> torch.Tensor:
+        """ x [seq, batch, feature]"""
         x = torch.where(padding_mask.t().unsqueeze(-1), self.padding_token, x)
         expand_cls_token = self.cls_token.expand(-1, x.shape[1], -1)
         x = torch.cat((x, expand_cls_token), dim=0)
         x = x + self.pos_embed
+        x = self.layer_norm(self.dropout(x)) #dropout and layernorm
         out = self.transformer_encoder(src=x, mask=self.attn_mask, src_key_padding_mask=None)
         return out[-1]  # [N, D]
 
@@ -159,160 +164,98 @@ class TemporalEncoder(nn.Module):
         mask = (torch.triu(torch.ones(seq_len, seq_len)) == 1).transpose(0, 1)
         mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
         return mask
-
-
-class TemporalEncoderLayer(nn.Module):
-
-    def __init__(self,
-                 embed_dim: int,
-                 num_heads: int = 8,
-                 dropout: float = 0.1) -> None:
-        super(TemporalEncoderLayer, self).__init__()
-        self.self_attn = nn.MultiheadAttention(embed_dim=embed_dim, num_heads=num_heads, dropout=dropout)
-        self.linear1 = nn.Linear(embed_dim, embed_dim * 4)
-        self.dropout = nn.Dropout(dropout)
-        self.linear2 = nn.Linear(embed_dim * 4, embed_dim)
-        self.norm1 = nn.LayerNorm(embed_dim)
-        self.norm2 = nn.LayerNorm(embed_dim)
-        self.dropout1 = nn.Dropout(dropout)
-        self.dropout2 = nn.Dropout(dropout)
-
-    def forward(self,
-                src: torch.Tensor,
-                src_mask: Optional[torch.Tensor] = None,
-                src_key_padding_mask: Optional[torch.Tensor] = None,
-                **kwargs) -> torch.Tensor:
-        x = src
-        x = x + self._sa_block(self.norm1(x), src_mask, src_key_padding_mask)
-        x = x + self._ff_block(self.norm2(x))
-        return x
-
-    def _sa_block(self,
-                  x: torch.Tensor,
-                  attn_mask: Optional[torch.Tensor],
-                  key_padding_mask: Optional[torch.Tensor]) -> torch.Tensor:
-        x = self.self_attn(x, x, x, attn_mask=attn_mask, key_padding_mask=key_padding_mask, need_weights=False)[0]
-        return self.dropout1(x)
-
-    def _ff_block(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.linear2(self.dropout(F.relu_(self.linear1(x))))
-        return self.dropout2(x)
     
-class ALEncoder(MessagePassing):
-
+class ALEncoder(nn.Module):
     def __init__(self,
-                 node_dim: int,
-                 edge_dim: int,
-                 embed_dim: int,
-                 num_heads: int = 8,
-                 dropout: float = 0.1,
-                 **kwargs) -> None:
-        super(ALEncoder, self).__init__(aggr='add', node_dim=0, **kwargs)
-        self.embed_dim = embed_dim
-        self.num_heads = num_heads
+                 lane_dim: int,
+                 out_dim: int,
+                 edge_attr_dim: int,
+                 num_heads: int,
+                 local_radius: float=30.,
+                 dropout: float=0.1) -> None:
+        super(ALEncoder, self).__init__()
+        self.local_radius = local_radius
+        self.attention_layers = nn.ModuleList(
+            [ALEncoderLayer(out_dim, out_dim, edge_attr_dim) for _ in range(num_heads)]
+        )
+        self.lane_emb = MLP(lane_dim, out_dim) #out_dim = v_enc.size(1)
+        self.edge_attr_dim = edge_attr_dim
+        self.dropout = nn.Dropout(dropout)
+        self.out_transform = nn.Linear(out_dim*num_heads, out_dim, bias=False)
 
-        self.lane_embed = MultipleInputEmbedding(in_channels=[node_dim, edge_dim], out_channel=embed_dim)
-        self.lin_q = nn.Linear(embed_dim, embed_dim)
-        self.lin_k = nn.Linear(embed_dim, embed_dim)
-        self.lin_v = nn.Linear(embed_dim, embed_dim)
-        self.lin_self = nn.Linear(embed_dim, embed_dim)
-        self.attn_drop = nn.Dropout(dropout)
-        self.lin_ih = nn.Linear(embed_dim, embed_dim)
-        self.lin_hh = nn.Linear(embed_dim, embed_dim)
-        self.out_proj = nn.Linear(embed_dim, embed_dim)
-        self.proj_drop = nn.Dropout(dropout)
-        self.norm1 = nn.LayerNorm(embed_dim)
-        self.norm2 = nn.LayerNorm(embed_dim)
-        self.mlp = nn.Sequential(
-            nn.Linear(embed_dim, embed_dim * 4),
-            nn.ReLU(inplace=True),
-            nn.Dropout(dropout),
-            nn.Linear(embed_dim * 4, embed_dim),
-            nn.Dropout(dropout))
-        self.is_intersection_embed = nn.Parameter(torch.Tensor(2, embed_dim))
-        self.turn_direction_embed = nn.Parameter(torch.Tensor(4, embed_dim))
-        self.traffic_control_embed = nn.Parameter(torch.Tensor(2, embed_dim))
-        nn.init.normal_(self.is_intersection_embed, mean=0., std=.02)
-        nn.init.normal_(self.turn_direction_embed, mean=0., std=.02)
-        nn.init.normal_(self.traffic_control_embed, mean=0., std=.02)
-        self.apply(init_weights)
+    def forward(self, data: V2XDataset, v_enc: torch.Tensor):
 
-    def forward(self,
-                x: Tuple[torch.Tensor, torch.Tensor],
-                edge_index: Adj,
-                edge_attr: torch.Tensor,
-                is_intersections: torch.Tensor,
-                turn_directions: torch.Tensor,
-                traffic_controls: torch.Tensor,
-                rotate_mat: Optional[torch.Tensor] = None,
-                size: Size = None) -> torch.Tensor:
-        x_lane, x_actor = x
-        is_intersections = is_intersections.long()
-        turn_directions = turn_directions.long()
-        traffic_controls = traffic_controls.long()
-        x_actor = x_actor + self._mha_block(self.norm1(x_actor), x_lane, edge_index, edge_attr, is_intersections,
-                                            turn_directions, traffic_controls, rotate_mat, size)
-        x_actor = x_actor + self._ff_block(self.norm2(x_actor))
-        return x_actor
+        lane = data.lane_vectors
 
-    def message(self,
-                edge_index: Adj,
-                x_i: torch.Tensor,
-                x_j: torch.Tensor,
-                edge_attr: torch.Tensor,
-                is_intersections_j,
-                turn_directions_j,
-                traffic_controls_j,
-                rotate_mat: Optional[torch.Tensor],
-                index: torch.Tensor,
-                ptr: OptTensor,
-                size_i: Optional[int]) -> torch.Tensor:
-        if rotate_mat is None:
-            x_j = self.lane_embed([x_j, edge_attr],
-                                  [self.is_intersection_embed[is_intersections_j],
-                                   self.turn_direction_embed[turn_directions_j],
-                                   self.traffic_control_embed[traffic_controls_j]])
-        else:
-            rotate_mat = rotate_mat[edge_index[1]]
-            x_j = self.lane_embed([torch.bmm(x_j.unsqueeze(-2).float(), rotate_mat).squeeze(-2),
-                                   torch.bmm(edge_attr.unsqueeze(-2).float(), rotate_mat).squeeze(-2)],
-                                  [self.is_intersection_embed[is_intersections_j],
-                                   self.turn_direction_embed[turn_directions_j],
-                                   self.traffic_control_embed[traffic_controls_j]])
-        query = self.lin_q(x_i).view(-1, self.num_heads, self.embed_dim // self.num_heads)
-        key = self.lin_k(x_j).view(-1, self.num_heads, self.embed_dim // self.num_heads)
-        value = self.lin_v(x_j).view(-1, self.num_heads, self.embed_dim // self.num_heads)
-        scale = (self.embed_dim // self.num_heads) ** 0.5
-        alpha = (query * key).sum(dim=-1) / scale
-        alpha = softmax(alpha, index, ptr, size_i)
-        alpha = self.attn_drop(alpha)
-        return value * alpha.unsqueeze(-1)
+        # lane_actor_mask = torch.cat((v_mask, (torch.ones(lane.size(0))==1).to(self.device)), dim=0)
+        data.lane_actor_index[0] += data.num_nodes #lane_actor_index[0]:lane index, lane_actor_index[1]:actor index
+        # lane_actor_index, lane_actor_attr = subgraph(subset=lane_actor_mask, 
+        #                                edge_index=data.lane_actor_index, edge_attr=data.lane_actor_attr)
+        lane = torch.bmm(lane[data.lane_actor_index[0]-data.num_nodes].unsqueeze(-2), data.rotate_imat[data.lane_actor_index[1]].float()).squeeze(-2)
 
-    def update(self,
-               inputs: torch.Tensor,
-               x: torch.Tensor) -> torch.Tensor:
-        x_actor = x[1]
-        inputs = inputs.view(-1, self.embed_dim)
-        gate = torch.sigmoid(self.lin_ih(inputs) + self.lin_hh(x_actor))
-        return inputs + gate * (self.lin_self(x_actor) - inputs)
+        lane_enc = self.lane_emb(lane)
+        lane_actor_enc = torch.cat((v_enc, lane_enc), dim=0) #shape:[num_veh+num_lane, v_dim]
+        # Concat multi-head attentions
+        out = torch.cat([att(lane_actor_enc, data.num_nodes, lane.size(0), data.lane_actor_index, data.lane_actor_vectors) for att in self.attention_layers], dim=1) 
+        out = F.elu(out)
+        out = self.dropout(out)
+        out = self.out_transform(out)
 
-    def _mha_block(self,
-                   x_actor: torch.Tensor,
-                   x_lane: torch.Tensor,
-                   edge_index: Adj,
-                   edge_attr: torch.Tensor,
-                   is_intersections: torch.Tensor,
-                   turn_directions: torch.Tensor,
-                   traffic_controls: torch.Tensor,
-                   rotate_mat: Optional[torch.Tensor],
-                   size: Size) -> torch.Tensor:
-        x_actor = self.out_proj(self.propagate(edge_index=edge_index, x=(x_lane, x_actor), edge_attr=edge_attr,
-                                               is_intersections=is_intersections, turn_directions=turn_directions,
-                                               traffic_controls=traffic_controls, rotate_mat=rotate_mat, size=size))
-        return self.proj_drop(x_actor)
+        return out
+    
+class ALEncoderLayer(nn.Module):
+    def __init__(self,
+                 v_dim: int,
+                 out_dim: int,
+                 edge_attr_dim: int,
+                 dropout: float=0.1) -> None:
+        super(ALEncoderLayer, self).__init__()
+        
+        self.W = nn.Linear(v_dim, out_dim, bias=False)
+        self.a = nn.Linear(2*out_dim + edge_attr_dim, 1, bias=False)
+        self.dropout = nn.Dropout(dropout)
 
-    def _ff_block(self, x_actor: torch.Tensor) -> torch.Tensor:
-        return self.mlp(x_actor)
+    def forward(self, 
+                lane_actor_enc: torch.Tensor, 
+                num_veh: int, 
+                num_lane: int,
+                lane_actor_index: torch.Tensor,
+                lane_actor_attr: torch.Tensor):
+        #transform node features
+        h = self.W(lane_actor_enc)
+        N = h.size(0)
+        assert N == num_veh+num_lane
+
+        attn_input = self._prepare_attention_input(h, num_veh,lane_actor_index, lane_actor_attr)
+        score_per_edge = F.leaky_relu(self.a(attn_input)).squeeze(1)  # Calculate attention coefficients
+        
+        #apply dropout to attention weights
+        score_per_edge = self.dropout(score_per_edge)
+        # softmax
+        # Calculate the numerator. Make logits <= 0 so that e^logit <= 1 (this will improve the numerical stability)
+        score_per_edge = score_per_edge - score_per_edge.max()
+        exp_score_per_edge = score_per_edge.exp()  
+
+        neigborhood_aware_denominator = scatter_add(exp_score_per_edge, lane_actor_index[1], dim=0, dim_size=num_veh)
+        neigborhood_aware_denominator = neigborhood_aware_denominator.index_select(0, lane_actor_index[1])
+        attentions_per_edge = exp_score_per_edge / (neigborhood_aware_denominator + 1e-16)
+
+        out_src = h[num_veh:] * attentions_per_edge.unsqueeze(dim=1) #shape[num_lane]
+        out = scatter_add(out_src, lane_actor_index[1], dim=0, dim_size=num_veh)
+        assert out.shape[0] == num_veh
+
+        # Apply activation function
+        out = F.elu(out)
+        return out
+    
+    def _prepare_attention_input(self, h, num_v, edge_index, edge_attr):
+        '''
+        h has shape [N, out_dim]
+        '''
+        src, tgt = edge_index
+        attn_input = torch.cat([h[num_v:], h[:num_v].index_select(0,tgt),  edge_attr], dim=1)
+
+        return attn_input   
 
 
 class PredictionDecoder(nn.Module):
