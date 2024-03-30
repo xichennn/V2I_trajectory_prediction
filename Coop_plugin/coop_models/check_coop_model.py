@@ -75,9 +75,14 @@ class Coop(pl.LightningModule):
                                     num_layers=num_temporal_layers,
                                     dropout=dropout)
         # self.dm = DAIRV2XMap()
-        self.al_encoder = ALEncoder(node_dim=ip_dim,
-                                    edge_dim=ip_dim,
-                                    embed_dim=out_dim,
+        # self.al_encoder = ALEncoder(node_dim=ip_dim,
+        #                             edge_dim=ip_dim,
+        #                             embed_dim=out_dim,
+        #                             num_heads=num_heads,
+        #                             dropout=dropout)
+        self.al_encoder = ALEncoder(lane_dim=ip_dim,
+                                    out_dim=out_dim,
+                                    edge_attr_dim=ip_dim,
                                     num_heads=num_heads,
                                     dropout=dropout)
         self.drop_edge_distance = DistanceDropEdge(model_radius)
@@ -118,10 +123,10 @@ class Coop(pl.LightningModule):
 
         #AL encoding
         al_edge_index, al_edge_attr = self.drop_edge_distance(v2x_data.lane_actor_index, v2x_data.lane_actor_vectors)
-        al_out = self.al_encoder(x=(v2x_data.lane_vectors, temp_out), edge_index=al_edge_index, edge_attr=al_edge_attr,
-                              is_intersections=v2x_data.is_intersections, turn_directions=v2x_data.turn_directions,
-                              traffic_controls=v2x_data.traffic_controls, rotate_mat=v2x_data.rotate_imat.float())
-
+        # al_out = self.al_encoder(x=(v2x_data.lane_vectors, temp_out), edge_index=al_edge_index, edge_attr=al_edge_attr,
+        #                       is_intersections=v2x_data.is_intersections, turn_directions=v2x_data.turn_directions,
+        #                       traffic_controls=v2x_data.traffic_controls, rotate_mat=v2x_data.rotate_imat.float())
+        al_out = self.al_encoder(v2x_data, temp_out)
         #decoder
         out = self.decoder(al_out) #traj, log_probs
 
