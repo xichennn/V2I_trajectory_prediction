@@ -1,1 +1,1 @@
-# V2X_traj_prediction
+# V2I_traj_prediction
